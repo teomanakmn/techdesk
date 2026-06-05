@@ -1,0 +1,170 @@
+/* Tailwind CSS v4 — tek satırlık import ile tüm utility sınıfları aktif olur */
+@import "tailwindcss";
+
+:root {
+  --surface-1: rgba(15, 23, 42, 0.72);
+  --surface-2: rgba(30, 41, 59, 0.58);
+  --surface-3: rgba(51, 65, 85, 0.36);
+  --accent: rgb(56 189 248);
+  --accent-soft: rgba(56, 189, 248, 0.16);
+  --text-high: rgb(248 250 252);
+  --text-mid: rgb(148 163 184);
+  --radius-lg: 1rem;
+  --radius-xl: 1.125rem;
+  --shadow-soft: 0 10px 30px rgba(2, 6, 23, 0.24);
+  --shadow-hover: 0 18px 42px rgba(2, 6, 23, 0.34);
+  --duration-fast: 160ms;
+  --duration-normal: 240ms;
+  --easing-standard: cubic-bezier(0.2, 0, 0, 1);
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  color: var(--text-high);
+}
+
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 80%, white 20%);
+  outline-offset: 2px;
+}
+
+.td-surface-card {
+  background: linear-gradient(180deg, var(--surface-1) 0%, var(--surface-2) 100%);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-soft);
+}
+
+.td-metric-card {
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.72), rgba(15, 23, 42, 0.72));
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-soft);
+  transition:
+    transform var(--duration-normal) var(--easing-standard),
+    box-shadow var(--duration-normal) var(--easing-standard),
+    border-color var(--duration-normal) var(--easing-standard);
+}
+
+.td-metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-hover);
+  border-color: rgba(56, 189, 248, 0.42);
+}
+
+.td-action-btn {
+  transition:
+    transform var(--duration-fast) var(--easing-standard),
+    background-color var(--duration-fast) var(--easing-standard),
+    box-shadow var(--duration-fast) var(--easing-standard),
+    border-color var(--duration-fast) var(--easing-standard);
+}
+
+.td-action-btn:active {
+  transform: translateY(1px) scale(0.99);
+}
+
+.td-table-row {
+  transition:
+    background-color var(--duration-fast) var(--easing-standard),
+    border-color var(--duration-fast) var(--easing-standard);
+}
+
+.td-table-row:hover {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.td-table-row:focus-within {
+  background: rgba(56, 189, 248, 0.08);
+  border-color: rgba(56, 189, 248, 0.28);
+}
+
+.td-skeleton {
+  border-radius: 0.875rem;
+  background: linear-gradient(
+    90deg,
+    rgba(148, 163, 184, 0.12) 0%,
+    rgba(148, 163, 184, 0.24) 50%,
+    rgba(148, 163, 184, 0.12) 100%
+  );
+  background-size: 220% 100%;
+  animation: td-shimmer 1.3s linear infinite;
+}
+
+.td-modal-overlay {
+  animation: td-fade-in var(--duration-normal) var(--easing-standard);
+}
+
+.td-modal-panel {
+  transform-origin: top center;
+  animation: td-modal-in var(--duration-normal) var(--easing-standard);
+}
+
+.td-stagger {
+  opacity: 0;
+  transform: translateY(8px);
+  animation: td-reveal var(--duration-normal) var(--easing-standard) forwards;
+}
+
+.td-sidebar-item {
+  position: relative;
+}
+
+.td-sidebar-item::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 6px;
+  height: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 90%, white 10%);
+  opacity: 0;
+  transform: scaleX(0.55);
+  transition: transform var(--duration-fast) var(--easing-standard), opacity var(--duration-fast) var(--easing-standard);
+}
+
+.td-sidebar-item[data-active="true"]::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+@keyframes td-shimmer {
+  from { background-position: 220% 0; }
+  to { background-position: -220% 0; }
+}
+
+@keyframes td-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes td-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes td-reveal {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
