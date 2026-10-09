@@ -1,6 +1,6 @@
 # TechDesk stabilization review
 
-**Status:** Engineering stabilization validation complete. This is a reviewed candidate for one stabilization commit, not a production release.
+**Status:** Engineering stabilization acceptance complete. This records a validated reference-backend checkpoint, not a production release.
 
 ## Scope
 
@@ -22,7 +22,7 @@ Logout and account switching clear account-specific notification state, stop sub
 
 | Check | Result | Scope |
 | --- | --- | --- |
-| Automated suite | PASS | `npm test`: 72 tests in 7 files |
+| Automated suite | PASS | `npm test`: 73 tests in 7 files; 72 at the approved stabilization checkpoint plus the portfolio follow-up regression below |
 | PostgreSQL policies and transactions | PASS | Repository migration and seed exercised through PGlite; Auth objects in this layer are test shims |
 | Hosted migration and RLS | PASS | Reference migration applied successfully; all nine public tables had RLS enabled |
 | Managed Auth | PASS | Real Supabase Auth sign-in worked for synthetic user, admin, and IT staff accounts |
@@ -40,6 +40,14 @@ Logout and account switching clear account-specific notification state, stop sub
 | Dependency audit | PASS at time checked | No known advisories were reported by the candidate's audit run; this does not rule out unknown defects |
 
 The local containerized Supabase stack was not run; Docker and Podman were intentionally not installed. Hosted staging acceptance used synthetic fixtures only. Two-browser Realtime delivery was not separately verified.
+
+## Portfolio browser follow-up
+
+Screenshot collection reproduced a development-mode sign-in navigation failure: Auth and profile access succeeded, but overlapping profile requests could make sign-in return a stale failure and leave the page at login. Pinia devtools creates a fresh store proxy for each action, so the request-deduplication WeakMap could not use action `this` as a stable identity. It now uses the store's shared `$state`; account/generation and stale-response checks remain intact.
+
+A regression using distinct action proxies failed before the fix and passed afterward. The full suite now has 73 tests in 7 files. Fresh synthetic user, IT staff, and admin sign-ins each reached the dashboard automatically, and role-specific views plus logout/account switching were exercised again. No old header, menu, or notification state was observed across those switches. Edge type-check, production-mode build with inert public configuration, bundle verification, and diff whitespace checks passed after the fix. The hosted acceptance matrix above was not repeated in full; no migration or function redeployment was needed.
+
+Browser console observations remain narrower than error-free runtime acceptance: logout can remount an account view briefly before redirection, logging caught null-user errors or rejected profile-RPC requests after identity has been cleared. These observations were left unchanged because they did not block the presentation or expose stale account data. Production operation and broader UI cleanup remain outside this phase.
 
 ## Remaining limits and review boundary
 

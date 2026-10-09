@@ -130,3 +130,16 @@ test('overlapping profile refreshes share one request', async () => {
   expect(await second).toBe(true)
   expect(mock.fetch).toHaveBeenCalledTimes(1)
 })
+
+test('profile refreshes share one request across Pinia action proxies', async () => {
+  const auth = useAuthStore(), request = deferred()
+  auth.setUser({ id: 'A' })
+  mock.fetch.mockReturnValue(request.promise)
+  // Pinia devtools passes a new store proxy to each action invocation.
+  const first = auth.fetchProfile.call(new Proxy(auth, {}))
+  const second = auth.fetchProfile.call(new Proxy(auth, {}))
+  request.resolve({ data: { id: 'A', role: 'user' }, error: null })
+  expect(await first).toBe(true)
+  expect(await second).toBe(true)
+  expect(mock.fetch).toHaveBeenCalledTimes(1)
+})

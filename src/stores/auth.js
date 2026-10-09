@@ -78,13 +78,15 @@ export const useAuthStore = defineStore('auth', {
       finally { this.isLoading = false }
     },
     fetchProfile() {
-      const existing = pendingProfiles.get(this)
+      // Pinia devtools creates per-action proxies; the shared state is a stable key.
+      const state = this.$state
+      const existing = pendingProfiles.get(state)
       if (existing?.id === this.user?.id && existing?.generation === this.generation) return existing.promise
       const entry = { id: this.user?.id, generation: this.generation }
       entry.promise = this._fetchProfile().finally(() => {
-        if (pendingProfiles.get(this) === entry) pendingProfiles.delete(this)
+        if (pendingProfiles.get(state) === entry) pendingProfiles.delete(state)
       })
-      pendingProfiles.set(this, entry)
+      pendingProfiles.set(state, entry)
       return entry.promise
     },
     async _fetchProfile() {
