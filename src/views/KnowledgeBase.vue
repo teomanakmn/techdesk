@@ -171,6 +171,8 @@ const createArticle = async () => {
           category: newArticle.value.category,
         })
         .eq('id', editingArticleId.value)
+      .select('id')
+      .single()
       error = updateResult.error
     } else {
       const insertResult = await supabase
@@ -210,6 +212,8 @@ const deleteArticle = async (article) => {
       .from('articles')
       .delete()
       .eq('id', article.id)
+      .select('id')
+      .single()
 
     if (error) throw error
 

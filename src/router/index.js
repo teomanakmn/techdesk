@@ -159,6 +159,8 @@ router.beforeEach(async (to, from) => {
     const requiresAuth = to.matched.some((record) => record.meta.requiresAuth)
     const guestOnly = to.matched.some((record) => record.meta.guestOnly)
 
+    if (requiresAuth && authStore.user) await authStore.fetchProfile()
+
     // 2) Giriş gerektiren sayfaya erişim kontrolü
     if (requiresAuth && !authStore.isAuthenticated) {
         return {

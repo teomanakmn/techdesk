@@ -46,6 +46,7 @@ const isLoadingAssets = ref(false)
 
 // ─── Yeni Talep Form Verileri ─────────────────────────────
 const newTicket = ref({
+  request_id: crypto.randomUUID(),
   title: '',
   description: '',
   priority: 'medium', // Varsayılan öncelik
@@ -150,7 +151,7 @@ const fetchAssignedAssets = async () => {
 
 // ─── Modal Aç/Kapat ──────────────────────────────────────
 const openModal = () => {
-  newTicket.value = { title: '', description: '', priority: 'medium', asset_id: '' }
+  newTicket.value = { request_id: crypto.randomUUID(), title: '', description: '', priority: 'medium', asset_id: '' }
   saveError.value = ''
   saveSuccess.value = false
   showModal.value = true
@@ -237,6 +238,7 @@ const submitRating = async () => {
 
 // ─── Yeni Talep Kaydet ────────────────────────────────────
 const handleSaveTicket = async () => {
+  if (isSaving.value) return
   saveError.value = ''
   saveSuccess.value = false
 
@@ -253,39 +255,11 @@ const handleSaveTicket = async () => {
   try {
     isSaving.value = true
 
-    const { data, error } = await supabase
-      .from('tickets')
-      .insert({
-        title: newTicket.value.title.trim(),
-        description: newTicket.value.description.trim(),
-        priority: newTicket.value.priority,
-        asset_id: newTicket.value.asset_id || null,
-        user_id: authStore.user.id,
-        status: 'open',
-      })
-      .select()
-
+    const { data, error } = await supabase.rpc('create_ticket', {
+      payload: { ...newTicket.value, asset_id: newTicket.value.asset_id || null },
+    })
     if (error) throw error
-    const createdTicketId = data?.[0]?.id
-
-    // Not: IT Personeli talebi çözdüğünde cihaz durumu tekrar 'Aktif' yapılabilir,
-    // bu özellik IT Dashboard'da yönetilebilir.
-    if (newTicket.value.asset_id) {
-      const { data: rpcData, error: rpcError } = await supabase.rpc('mark_assigned_asset_faulty', {
-        target_asset_id: newTicket.value.asset_id,
-      })
-
-      if (rpcError || !rpcData?.ok) {
-        // Asset durumu güncellenemezse ticket kaydını geri al.
-        if (createdTicketId) {
-          await supabase
-            .from('tickets')
-            .delete()
-            .eq('id', createdTicketId)
-        }
-        throw new Error(rpcError?.message || 'Seçilen ekipman durumu güncellenemedi.')
-      }
-    }
+    if (!data?.id) throw new Error('Talep kaydı doğrulanamadı.')
 
     // Başarılı → listeye ekle ve modalı kapat
     saveSuccess.value = true

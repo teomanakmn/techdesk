@@ -15,14 +15,9 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabaseClient'
-import { supabaseAdmin } from '@/lib/supabaseAdmin'
-import { useNotificationsStore } from '@/stores/notifications'
-import { useLogger } from '@/utils/useLogger'
 import CreateArticleFromTicket from '@/components/CreateArticleFromTicket.vue'
 
 const authStore = useAuthStore()
-const notificationsStore = useNotificationsStore()
-const { logAction } = useLogger()
 
 // ─── State ────────────────────────────────────────────────
 const allTickets = ref([])
@@ -248,32 +243,6 @@ const handleArticleSaved = () => {
   }, 2200)
 }
 
-const buildStatusNotification = ({ previousStatus, nextStatus, ticket }) => {
-  if (nextStatus === previousStatus) return null
-
-  if (nextStatus === 'resolved') {
-    return {
-      userId: ticket.user_id,
-      title: 'Talebiniz Çözüldü ✅',
-      body: `"${ticket.title}" başlıklı destek talebiniz çözüldü olarak işaretlendi.`,
-      type: 'success',
-      ticketId: ticket.id,
-    }
-  }
-
-  if (nextStatus === 'in_progress') {
-    return {
-      userId: ticket.user_id,
-      title: 'Talebiniz İşleme Alındı 🔧',
-      body: `"${ticket.title}" başlıklı destek talebiniz IT ekibi tarafından inceleniyor.`,
-      type: 'info',
-      ticketId: ticket.id,
-    }
-  }
-
-  return null
-}
-
 const getCommentAuthor = (comment) => {
   if (!selectedTicket.value) return 'Destek Ekibi'
   if (comment.user_id === selectedTicket.value.user_id) return 'Talep Sahibi'
@@ -281,99 +250,30 @@ const getCommentAuthor = (comment) => {
   return 'Destek Ekibi'
 }
 
-const saveStatusNote = async (ticketId) => {
-  if (!statusNote.value.trim()) return { success: true, skipped: true }
-
-  const { error } = await supabase
-    .from('comments')
-    .insert({
-      ticket_id: ticketId,
-      user_id: authStore.user.id,
-      content: statusNote.value.trim(),
-    })
-
-  if (error) throw error
-  return { success: true }
-}
-
-// ─── Durum Güncelle ───────────────────────────────────────
 const handleStatusUpdate = async () => {
-  if (!selectedTicket.value) return
+  if (!selectedTicket.value || isSavingStatus.value) return
   statusSaveError.value = ''
   statusSaveWarning.value = ''
   statusSaveSuccess.value = false
-
-  const previousStatus = selectedTicket.value.status
-
   try {
     isSavingStatus.value = true
-
-    const { error } = await supabase
-      .from('tickets')
-      .update({ status: newStatus.value })
-      .eq('id', selectedTicket.value.id)
-
-    if (error) throw error
-
-    if (newStatus.value === 'resolved' && selectedTicket.value.asset_id) {
-      const { error: assetStatusError } = await supabase
-        .from('assets')
-        .update({ status: 'Aktif' })
-        .eq('id', selectedTicket.value.asset_id)
-
-      if (assetStatusError) {
-        statusSaveWarning.value = 'Ticket çözüldü, ancak ekipman durumu Aktif olarak güncellenemedi.'
-      } else if (selectedTicket.value.assets) {
-        selectedTicket.value.assets.status = 'Aktif'
-      }
-    }
-
-    await saveStatusNote(selectedTicket.value.id)
-
-    statusSaveSuccess.value = true
-
-    // Listedeki talebin durumunu da güncelle
-    const idx = allTickets.value.findIndex(t => t.id === selectedTicket.value.id)
-    if (idx !== -1) {
-      allTickets.value[idx].status = newStatus.value
-    }
-    selectedTicket.value.status = newStatus.value
-
-    await logAction(
-      'ticket_status_updated',
-      'ticket',
-      selectedTicket.value.id,
-      `Kullanıcı ${authStore.fullName || authStore.user?.email || 'Bilinmeyen'} tarafından ticket durumu "${statusLabels[newStatus.value] || newStatus.value}" olarak güncellendi.`
-    )
-
-    // Ticket güncellemesinden bağımsız olarak bildirimi ayrı ele al
-    const notificationPayload = buildStatusNotification({
-      previousStatus,
-      nextStatus: newStatus.value,
-      ticket: selectedTicket.value,
+    const { data, error } = await supabase.rpc('update_ticket_status', {
+      target_ticket_id: selectedTicket.value.id,
+      target_status: newStatus.value,
+      expected_updated_at: selectedTicket.value.updated_at,
+      note: statusNote.value.trim(),
     })
-
-    if (notificationPayload) {
-      const notificationResult = await notificationsStore.createNotification(notificationPayload)
-      if (!notificationResult?.success) {
-        statusSaveWarning.value = 'Durum güncellendi, ancak kullanıcı bildirimi gönderilemedi.'
-      }
-    }
-
+    if (error) throw error
+    if (!data?.id) throw new Error('Durum güncellemesi doğrulanamadı.')
+    selectedTicket.value = { ...selectedTicket.value, ...data }
     statusNote.value = ''
-    await fetchComments(selectedTicket.value.id)
-
-    // 1 saniye sonra success mesajını kapat
-    setTimeout(() => {
-      statusSaveSuccess.value = false
-      statusSaveWarning.value = ''
-    }, 2000)
+    statusSaveSuccess.value = true
+    await Promise.all([fetchAllTickets(), fetchComments(data.id)])
+    const refreshed = allTickets.value.find(ticket => ticket.id === data.id)
+    if (refreshed) selectedTicket.value = { ...refreshed }
   } catch (error) {
-    console.error('Durum güncelleme hatası:', error)
-    statusSaveError.value = 'Durum güncellenemedi: ' + error.message
-  } finally {
-    isSavingStatus.value = false
-  }
+    statusSaveError.value = 'Durum güncellenemedi: ' + error.message + ' Listeyi yenileyin.'
+  } finally { isSavingStatus.value = false }
 }
 
 // ─── Tarih Formatlama ─────────────────────────────────────

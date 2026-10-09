@@ -1,6 +1,5 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { createClient } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabaseClient'
 
 const users = ref([])
@@ -42,9 +41,6 @@ const stats = computed(() => ({
 const roleUpdating = ref({})
 const roleUpdateSuccess = ref({})
 const deletingUsers = ref({})
-const REQUEST_TIMEOUT_MS = 15000
-let savingWatchdog = null
-
 const mapProfileToRow = (profile) => ({
   id: profile.id,
   fullName: profile.full_name || '—',
@@ -53,137 +49,34 @@ const mapProfileToRow = (profile) => ({
   createdAt: profile.created_at,
 })
 
-const createTempAuthClient = () => {
-  const url = import.meta.env.VITE_SUPABASE_URL
-  const anon = import.meta.env.VITE_SUPABASE_ANON_KEY
-  return createClient(url, anon, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-      detectSessionInUrl: false,
-      storageKey: 'techdesk-admin-create-user-temp',
-    },
-  })
-}
-
-const waitForProfileRow = async (client, userId, maxAttempts = 12, delayMs = 350) => {
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const { data, error } = await client
-      .from('profiles')
-      .select('id, role')
-      .eq('id', userId)
-      .maybeSingle()
-
-    if (!error && data?.id) return data
-
-    await new Promise(resolve => setTimeout(resolve, delayMs))
+const invokeAccount = async body => {
+  const { data, error } = await supabase.functions.invoke('admin-users', { body })
+  if (error) {
+    const result = await error.context?.json?.().catch(() => null)
+    throw new Error(result?.error || 'İşlem doğrulanamadı. Tekrar denemeden önce kullanıcı listesini yenileyin.')
   }
-
-  throw new Error('Kullanıcı oluşturuldu ancak profil kaydı henüz hazır değil. Biraz sonra tekrar deneyin.')
-}
-
-const withTimeout = async (promise, timeoutMs = REQUEST_TIMEOUT_MS) => {
-  let timeoutId
-  const timeoutPromise = new Promise((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error('İşlem zaman aşımına uğradı. Lütfen tekrar deneyin.'))
-    }, timeoutMs)
-  })
-
-  try {
-    return await Promise.race([promise, timeoutPromise])
-  } finally {
-    clearTimeout(timeoutId)
-  }
-}
-
-const loadUsersViaRpc = async () => {
-  const { data, error } = await supabase.rpc('admin_list_profiles', { payload: {} })
-
-  if (error) throw error
-
-  users.value = (data || []).map(mapProfileToRow)
-  featureWarning.value = 'Rol yönetimi ve kullanıcı listesi güvenli RPC ile çalışıyor.'
-}
-
-const loadUsersViaDirectSelect = async () => {
-  const { data: profiles, error } = await supabase
-    .from('profiles')
-    .select('id, full_name, role, created_at')
-    .order('created_at', { ascending: true })
-
-  if (error) throw error
-
-  users.value = (profiles || []).map(mapProfileToRow)
-  featureWarning.value = 'Güvenlik nedeniyle tarayıcı tarafında auth.admin API kullanılamıyor. E-posta listesi sınırlı görünür.'
-}
-
-const ensureProfileRow = async ({ client, userId, fullName }) => {
-  try {
-    return await waitForProfileRow(client, userId)
-  } catch {
-    const { data: authData, error: authError } = await client.auth.getUser()
-
-    if (authError || authData?.user?.id !== userId) {
-      throw new Error('Profil kaydı otomatik oluşturulamadı. Supabase trigger ayarını kontrol edin.')
-    }
-
-    // Trigger çalışmadıysa yeni kullanıcının kendi oturumuyla manuel profil oluşturmayı deneriz.
-    const { error: insertError } = await client
-      .from('profiles')
-      .insert({
-        id: userId,
-        full_name: fullName,
-        role: 'user',
-      })
-
-    if (insertError) {
-      throw new Error('Profil kaydı oluşturulamadı. Supabase trigger/RLS ayarlarını kontrol edin.')
-    }
-
-    return await waitForProfileRow(client, userId, 4, 250)
-  }
+  if (!data?.ok) throw new Error(data?.error || 'İşlem doğrulanamadı.')
+  return data
 }
 
 const applyRoleForUser = async ({ userId, role }) => {
-  if (role === 'user') return
-
-  const { data: updatedRow, error: roleError } = await supabase.rpc('admin_update_user_role', {
-    target_user_id: userId,
-    target_role: role,
-  })
-
-  if (roleError) {
-    if (roleError.message?.includes('Could not find the function public.admin_update_user_role')) {
-      throw new Error('Supabase RPC fonksiyonu eksik. supabase/admin_user_management.sql dosyasını SQL Editor\'da çalıştırın.')
-    }
-    throw roleError
-  }
-
-  if (!updatedRow?.id || updatedRow.role !== role) {
-    throw new Error('Rol güncellemesi kaydedilemedi. RPC sonucu doğrulanamadı.')
-  }
+  const { data, error } = await supabase.rpc('admin_update_user_role', { target_user_id: userId, target_role: role })
+  if (error) throw error
+  if (data?.id !== userId || data.role !== role) throw new Error('Rol güncellemesi doğrulanamadı.')
 }
 
 const fetchUsers = async () => {
   isLoading.value = true
   loadError.value = ''
-  featureWarning.value = ''
   try {
-    try {
-      await loadUsersViaRpc()
-    } catch (rpcError) {
-      if (!rpcError.message?.includes('Could not find the function public.admin_list_profiles')) {
-        throw rpcError
-      }
-      await loadUsersViaDirectSelect()
-    }
-  } catch (error) {
-    console.error('Kullanıcılar yüklenirken hata:', error)
-    loadError.value = 'Kullanıcılar yüklenemedi. Profiles tablosu izinlerini kontrol edin.'
-  } finally {
-    isLoading.value = false
-  }
+    const { data, error } = await supabase.rpc('admin_list_profiles', { payload: {} })
+    if (error) throw error
+    users.value = (data || []).map(mapProfileToRow)
+    featureWarning.value = ''
+  } catch {
+    users.value = []
+    loadError.value = 'Kullanıcı listesi yüklenemedi. Yerel backend kurulumunu ve yönetici yetkisini kontrol edin.'
+  } finally { isLoading.value = false }
 }
 
 const handleRoleChange = async (user, newRole) => {
@@ -217,19 +110,7 @@ const handleDeleteUser = async (user) => {
 
   deletingUsers.value[user.id] = true
   try {
-    const { data, error } = await supabase.rpc('admin_delete_user', {
-      target_user_id: user.id,
-    })
-
-    if (error) {
-      if (error.message?.includes('Could not find the function public.admin_delete_user')) {
-        throw new Error('Supabase RPC fonksiyonu eksik. supabase/admin_user_management.sql dosyasını SQL Editor\'da çalıştırın.')
-      }
-      throw error
-    }
-    if (!data?.ok) {
-      throw new Error('Silme işlemi doğrulanamadı.')
-    }
+    await invokeAccount({ action: 'delete', userId: user.id })
 
     await fetchUsers()
   } catch (error) {
@@ -248,108 +129,23 @@ const openModal = () => {
 }
 
 const closeModal = () => {
-  if (savingWatchdog) {
-    clearTimeout(savingWatchdog)
-    savingWatchdog = null
-  }
-  isSaving.value = false
+  if (isSaving.value) return
   showModal.value = false
 }
 
 const handleAddUser = async () => {
   if (isSaving.value) return
-
   saveError.value = ''
   saveSuccess.value = false
-
-  if (!newUser.value.fullName.trim()) {
-    saveError.value = 'Ad Soyad alanı zorunludur.'
-    return
-  }
-  if (!newUser.value.email.trim()) {
-    saveError.value = 'E-posta alanı zorunludur.'
-    return
-  }
-  if (!newUser.value.password || newUser.value.password.length < 6) {
-    saveError.value = 'Şifre en az 6 karakter olmalıdır.'
-    return
-  }
-
   try {
     isSaving.value = true
-    savingWatchdog = setTimeout(() => {
-      if (isSaving.value) {
-        isSaving.value = false
-        saveError.value = 'İşlem beklenenden uzun sürdü. Lütfen tekrar deneyin.'
-      }
-    }, REQUEST_TIMEOUT_MS + 2000)
-
-    // Ayrı auth client kullanarak mevcut admin oturumunu bozmadan kayıt oluştur.
-    const tempClient = createTempAuthClient()
-    const { data, error } = await withTimeout(
-      tempClient.auth.signUp({
-        email: newUser.value.email.trim(),
-        password: newUser.value.password,
-        options: {
-          data: { full_name: newUser.value.fullName.trim() },
-        },
-      })
-    )
-    if (error) throw error
-
-    // Supabase bazen mevcut e-posta durumunda "fake user" dönebilir.
-    const identityCount = data?.user?.identities?.length ?? 0
-    if (identityCount === 0) {
-      throw new Error('Bu e-posta adresi zaten kayıtlı ya da onay bekliyor.')
-    }
-
-    const createdUserId = data?.user?.id
-    if (!createdUserId) {
-      throw new Error('Kullanıcı oluşturuldu ancak kimlik bilgisi alınamadı.')
-    }
-
-    // auth.users tetikleyicisinin profiles kaydını oluşturmasını bekle;
-    // gerekirse manuel fallback ile profil satırı oluştur.
-    await withTimeout(ensureProfileRow({
-      client: tempClient,
-      userId: createdUserId,
-      fullName: newUser.value.fullName.trim(),
-    }))
-
-    await withTimeout(applyRoleForUser({
-      userId: createdUserId,
-      role: newUser.value.role,
-    }))
-
+    await invokeAccount({ action: 'create', ...newUser.value })
     saveSuccess.value = true
-    closeModal()
+    showModal.value = false
+    newUser.value.password = ''
     await fetchUsers()
-  } catch (error) {
-    console.error('Kullanıcı ekleme hatası:', error)
-    const translations = {
-      'User already registered': 'Bu e-posta adresi zaten kayıtlı.',
-      'A user with this email address has already been registered': 'Bu e-posta adresi zaten kayıtlı.',
-      'Password should be at least 6 characters': 'Şifre en az 6 karakter olmalıdır.',
-      'Signup is disabled': 'Kayıt işlemi sistem ayarlarında kapalı.',
-    }
-    let message = error.message || 'Bilinmeyen hata'
-    if (error?.status === 422) {
-      message = `Kayıt isteği işlenemedi (422): ${message}`
-    }
-    for (const [key, value] of Object.entries(translations)) {
-      if (message.includes(key)) {
-        message = value
-        break
-      }
-    }
-    saveError.value = message
-  } finally {
-    if (savingWatchdog) {
-      clearTimeout(savingWatchdog)
-      savingWatchdog = null
-    }
-    isSaving.value = false
-  }
+  } catch (error) { saveError.value = error.message }
+  finally { isSaving.value = false }
 }
 
 const formatDate = (dateStr) => {
@@ -554,8 +350,8 @@ onMounted(() => {
               v-model="newUser.password"
               type="password"
               required
-              minlength="6"
-              placeholder="En az 6 karakter"
+              minlength="8"
+              placeholder="En az 8 karakter"
               class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
             />
           </div>
