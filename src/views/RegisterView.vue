@@ -36,8 +36,8 @@ const handleRegister = async () => {
   }
 
   // Şifre uzunluk kontrolü
-  if (password.value.length < 6) {
-    errorMsg.value = 'Şifre en az 6 karakter olmalıdır.'
+  if (password.value.length < 8) {
+    errorMsg.value = 'Şifre en az 8 karakter olmalıdır.'
     return
   }
 
@@ -130,7 +130,7 @@ const handleRegister = async () => {
               v-model="password"
               type="password"
               required
-              placeholder="En az 6 karakter"
+              placeholder="En az 8 karakter"
               class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
             />
           </div>

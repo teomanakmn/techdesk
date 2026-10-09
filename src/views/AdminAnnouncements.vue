@@ -86,6 +86,8 @@ const toggleAnnouncementStatus = async (announcement) => {
     .from('announcements')
     .update({ is_active: nextStatus })
     .eq('id', announcement.id)
+      .select('id')
+      .single()
 
   if (error) {
     console.error('Duyuru durumu güncellenemedi:', error)
@@ -104,6 +106,8 @@ const deleteAnnouncement = async (announcement) => {
     .from('announcements')
     .delete()
     .eq('id', announcement.id)
+      .select('id')
+      .single()
 
   if (error) {
     console.error('Duyuru silinemedi:', error)

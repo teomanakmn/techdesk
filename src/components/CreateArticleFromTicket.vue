@@ -72,19 +72,9 @@ const submitArticle = async () => {
   try {
     isSaving.value = true
 
-    // source_ticket_id kolonu varsa kaydet, yoksa geriye dönük uyumluluk için tekrar dene.
-    let insertError = null
-    const withSource = await supabase
-      .from('articles')
+    const { error } = await supabase.from('articles')
       .insert({ ...basePayload, source_ticket_id: props.ticket?.id || null })
-    insertError = withSource.error
-
-    if (insertError && insertError.message?.toLowerCase().includes('source_ticket_id')) {
-      const fallback = await supabase.from('articles').insert(basePayload)
-      insertError = fallback.error
-    }
-
-    if (insertError) throw insertError
+    if (error) throw error
 
     emit('saved')
     closeModal()

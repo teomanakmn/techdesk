@@ -10,6 +10,7 @@
 
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
+import { useAuthStore } from './stores/auth'
 import router from './router'
 import App from './App.vue'
 import './style.css'
@@ -21,6 +22,7 @@ const app = createApp(App)
 app.use(createPinia())
 
 // 3) Vue Router eklentisini kaydet
+await useAuthStore().initAuth()
 app.use(router)
 
 // 4) Uygulamayı DOM'a bağla

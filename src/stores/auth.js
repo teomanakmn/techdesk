@@ -1,67 +1,35 @@
-/**
- * Auth Store — Kimlik Doğrulama State Yönetimi
- * =============================================
- * Supabase Auth ile kullanıcı oturum yönetimini sağlar.
- *
- * State:
- *   user    → Supabase auth kullanıcısı (email, id vb.)
- *   profile → profiles tablosundaki ek bilgiler (role, full_name)
- *   isLoading → Auth işlemleri sırasında loading durumu
- *
- * Actions:
- *   initAuth()    → Sayfa yüklendiğinde mevcut oturumu kontrol eder
- *   signUp()      → Yeni kullanıcı kaydı
- *   signIn()      → Email/şifre ile giriş
- *   signOut()     → Oturumu sonlandırır
- *   fetchProfile()→ profiles tablosundan kullanıcı bilgisini çeker
- */
-
 import { defineStore } from 'pinia'
 import { supabase } from '@/lib/supabaseClient'
+import { useNotificationsStore } from './notifications'
 
-const ROLE_CACHE_KEY = 'techdesk_last_role'
-const NAME_CACHE_KEY = 'techdesk_last_full_name'
-const EMAIL_CACHE_KEY = 'techdesk_last_email'
+const pendingProfiles = new WeakMap()
+const BLOCKED_KEY = 'techdesk.session-blocked'
+const storage = typeof window !== 'undefined' ? window.localStorage : null
+
+// Cached role/name values from older releases never authorize a session.
+for (const key of ['techdesk_last_role', 'techdesk_last_full_name', 'techdesk_last_email']) {
+  storage?.removeItem(key)
+}
 
 export const useAuthStore = defineStore('auth', {
-    // ─── Reaktif State ───────────────────────────────────────
-    state: () => ({
-        user: null,          // Supabase auth user objesi
-        profile: null,       // profiles tablosundaki satır
-        lastKnownRole: localStorage.getItem(ROLE_CACHE_KEY) || null,
-        lastKnownFullName: localStorage.getItem(NAME_CACHE_KEY) || '',
-        lastKnownEmail: localStorage.getItem(EMAIL_CACHE_KEY) || '',
-        isLoading: true,     // Uygulama başlangıcında true (App.vue loading spinner)
-        actionLoading: false, // signIn/signUp işlemi sırasında true (buton loading)
-        authSubscription: null, // onAuthStateChange unsubscribe referansı
-    }),
-
-    // ─── Computed Değerler ───────────────────────────────────
-    getters: {
-        // Kullanıcı giriş yapmış mı?
-        isAuthenticated: (state) => !!state.user,
-
-        // Kullanıcının rolü (varsayılan: 'user')
-        userRole: (state) => state.profile?.role || state.lastKnownRole || 'user',
-
-        // Kullanıcının tam adı
-        fullName: (state) => state.profile?.full_name || state.lastKnownFullName || '',
-
-        // Kullanıcının e-postası (geçici auth dalgalanmalarında kaybolmasın)
-        emailAddress: (state) => state.user?.email || state.lastKnownEmail || '',
-    },
-
-    // ─── Action'lar ──────────────────────────────────────────
-    actions: {
-        /**
-         * translateError — Supabase hata mesajlarını Türkçeye çevirir
-         */
+  state: () => ({
+    user: null, profile: null, profileError: '', isLoading: true,
+    actionLoading: false, authSubscription: null, generation: 0, profileRequest: 0,
+    sessionBlocked: storage?.getItem(BLOCKED_KEY) === 'true',
+  }),
+  getters: {
+    isAuthenticated: state => !!state.user && state.profile?.id === state.user.id,
+    userRole: state => state.profile?.id === state.user?.id ? state.profile?.role : null,
+    fullName: state => state.profile?.full_name || '',
+    emailAddress: state => state.user?.email || '',
+  },
+  actions: {
         _translateError(msg) {
             const translations = {
                 'Invalid login credentials': 'E-posta veya şifre hatalı.',
                 'Email not confirmed': 'E-posta adresiniz henüz doğrulanmamış.',
                 'User already registered': 'Bu e-posta adresi zaten kayıtlı.',
-                'Password should be at least 6 characters': 'Şifre en az 6 karakter olmalıdır.',
+                'Password should be at least 8 characters': 'Şifre en az 8 karakter olmalıdır.',
                 'Unable to validate email address: invalid format': 'Geçersiz e-posta formatı.',
                 'Signup requires a valid password': 'Geçerli bir şifre giriniz.',
                 'email rate limit exceeded': 'Çok fazla deneme yapıldı. Lütfen biraz bekleyin.',
@@ -76,227 +44,120 @@ export const useAuthStore = defineStore('auth', {
             return msg // Çeviri bulunamazsa orijinal mesajı döndür
         },
 
-        /**
-         * initAuth — Uygulama başlangıcında çağrılır (App.vue)
-         * 1. Mevcut oturumu kontrol eder
-         * 2. Auth durumu değişikliklerini dinler (login/logout)
-         */
-        async initAuth() {
-            try {
-                this.isLoading = true
 
-                // Mevcut oturumu al
-                const { data: { session } } = await supabase.auth.getSession()
-
-                if (session?.user) {
-                    this.user = session.user
-                    this.lastKnownEmail = session.user.email || this.lastKnownEmail
-                    if (this.lastKnownEmail) localStorage.setItem(EMAIL_CACHE_KEY, this.lastKnownEmail)
-                    await this.fetchProfile()
-                }
-
-                // Eski listener varsa temizle (hot reload / tekrar init durumlari icin)
-                if (this.authSubscription) {
-                    this.authSubscription.unsubscribe()
-                    this.authSubscription = null
-                }
-
-                // Auth durumu değişikliklerini dinle
-                // (başka sekmede logout olunursa, token yenilenirse vb.)
-                const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
-                    if (event === 'SIGNED_IN' && session?.user) {
-                        this.user = session.user
-                        this.lastKnownEmail = session.user.email || this.lastKnownEmail
-                        if (this.lastKnownEmail) localStorage.setItem(EMAIL_CACHE_KEY, this.lastKnownEmail)
-                        await this.fetchProfile()
-                    } else if (event === 'TOKEN_REFRESHED' && session?.user) {
-                        this.user = session.user
-                        this.lastKnownEmail = session.user.email || this.lastKnownEmail
-                        if (this.lastKnownEmail) localStorage.setItem(EMAIL_CACHE_KEY, this.lastKnownEmail)
-                        if (!this.profile) {
-                            await this.fetchProfile()
-                        }
-                    } else if (event === 'SIGNED_OUT') {
-                        this.user = null
-                        this.profile = null
-                        this.lastKnownRole = null
-                        this.lastKnownFullName = ''
-                        this.lastKnownEmail = ''
-                        localStorage.removeItem(ROLE_CACHE_KEY)
-                        localStorage.removeItem(NAME_CACHE_KEY)
-                        localStorage.removeItem(EMAIL_CACHE_KEY)
-                    }
-                })
-                this.authSubscription = data?.subscription || null
-            } catch (error) {
-                console.error('Auth başlatma hatası:', error)
-            } finally {
-                this.isLoading = false
-            }
-        },
-
-        /**
-         * signUp — Yeni kullanıcı kaydı
-         * @param {string} email    - Kullanıcı email'i
-         * @param {string} password - Şifre (min 6 karakter)
-         * @param {string} fullName - Ad Soyad
-         * @returns {{ success: boolean, error?: string }}
-         *
-         * NOT: Kayıt başarılı olduğunda trigger otomatik olarak
-         *      profiles tablosuna satır ekler (schema.sql'deki trigger)
-         */
-        async signUp(email, password, fullName) {
-            try {
-                this.actionLoading = true
-
-                const { data, error } = await supabase.auth.signUp({
-                    email,
-                    password,
-                    options: {
-                        // Bu metadata trigger fonksiyonu tarafından okunur
-                        // ve profiles.full_name alanına yazılır
-                        data: { full_name: fullName },
-                    },
-                })
-
-                if (error) throw error
-
-                return { success: true }
-            } catch (error) {
-                console.error('Kayıt hatası:', error)
-                return { success: false, error: this._translateError(error.message) }
-            } finally {
-                this.actionLoading = false
-            }
-        },
-
-        /**
-         * signIn — Email ve şifre ile giriş
-         * @param {string} email
-         * @param {string} password
-         * @returns {{ success: boolean, error?: string }}
-         */
-        async signIn(email, password) {
-            try {
-                this.actionLoading = true
-
-                const { data, error } = await supabase.auth.signInWithPassword({
-                    email,
-                    password,
-                })
-
-                if (error) throw error
-
-                // Giriş başarılı → user state güncellenir (onAuthStateChange da tetiklenir)
-                this.user = data.user
-                this.lastKnownEmail = data.user?.email || this.lastKnownEmail
-                if (this.lastKnownEmail) localStorage.setItem(EMAIL_CACHE_KEY, this.lastKnownEmail)
-                await this.fetchProfile()
-
-                return { success: true }
-            } catch (error) {
-                console.error('Giriş hatası:', error)
-                return { success: false, error: this._translateError(error.message) }
-            } finally {
-                this.actionLoading = false
-            }
-        },
-
-        /**
-         * signOut — Kullanıcı oturumunu sonlandırır
-         */
-        async signOut() {
-            try {
-                await supabase.auth.signOut()
-            } catch (error) {
-                console.error('Çıkış hatası:', error)
-            } finally {
-                // Hata olsa bile state'i temizle
-                this.user = null
-                this.profile = null
-                this.lastKnownRole = null
-                this.lastKnownFullName = ''
-                this.lastKnownEmail = ''
-                localStorage.removeItem(ROLE_CACHE_KEY)
-                localStorage.removeItem(NAME_CACHE_KEY)
-                localStorage.removeItem(EMAIL_CACHE_KEY)
-            }
-        },
-
-        /**
-         * recoverSession — Sekme geri aktif olduğunda oturumu tekrar doğrular.
-         * Token yenileme / askıya alma sonrası donma etkisini azaltır.
-         */
-        async recoverSession() {
-            try {
-                const { data: { session }, error } = await supabase.auth.getSession()
-                if (error) throw error
-
-                if (session?.user) {
-                    this.user = session.user
-                    this.lastKnownEmail = session.user.email || this.lastKnownEmail
-                    if (this.lastKnownEmail) localStorage.setItem(EMAIL_CACHE_KEY, this.lastKnownEmail)
-                    if (!this.profile || this.profile.id !== session.user.id) {
-                        await this.fetchProfile()
-                    }
-                } else {
-                    // Geçici ağ dalgalanmalarında false-null dönebiliyor.
-                    // Varsa refresh token ile bir kez daha toparlamayı dene.
-                    const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession()
-                    if (!refreshError && refreshed?.session?.user) {
-                        this.user = refreshed.session.user
-                        this.lastKnownEmail = refreshed.session.user.email || this.lastKnownEmail
-                        if (this.lastKnownEmail) localStorage.setItem(EMAIL_CACHE_KEY, this.lastKnownEmail)
-                        if (!this.profile || this.profile.id !== refreshed.session.user.id) {
-                            await this.fetchProfile()
-                        }
-                    }
-                }
-            } catch (error) {
-                console.error('Oturum toparlama hatası:', error)
-                // Geçici hatada mevcut state'i koru; kullanıcıyı anlık düşürme.
-            }
-        },
-
-        /**
-         * fetchProfile — profiles tablosundan kullanıcı bilgisini çeker
-         * Supabase RLS sayesinde sadece kendi profilini görebilir
-         */
-        async fetchProfile() {
-            if (!this.user) return
-
-            const tryFetchProfile = async () => {
-                const { data, error } = await supabase
-                    .from('profiles')
-                    .select('*')
-                    .eq('id', this.user.id)
-                    .single()
-                if (error) throw error
-                return data
-            }
-
-            try {
-                const data = await tryFetchProfile()
-                this.profile = data
-                this.lastKnownRole = data?.role || this.lastKnownRole
-                this.lastKnownFullName = data?.full_name || this.lastKnownFullName
-
-                if (this.lastKnownRole) localStorage.setItem(ROLE_CACHE_KEY, this.lastKnownRole)
-                if (this.lastKnownFullName) localStorage.setItem(NAME_CACHE_KEY, this.lastKnownFullName)
-            } catch (error) {
-                // Kısa ağ/yenileme kopmalarında kullanıcıyı "user" rolüne düşürmemek için
-                // bir kez daha deneriz. Yine olmazsa cache'deki rol korunur.
-                try {
-                    const data = await tryFetchProfile()
-                    this.profile = data
-                    this.lastKnownRole = data?.role || this.lastKnownRole
-                    this.lastKnownFullName = data?.full_name || this.lastKnownFullName
-                    if (this.lastKnownRole) localStorage.setItem(ROLE_CACHE_KEY, this.lastKnownRole)
-                    if (this.lastKnownFullName) localStorage.setItem(NAME_CACHE_KEY, this.lastKnownFullName)
-                } catch (retryError) {
-                    console.error('Profil çekme hatası:', retryError)
-                }
-            }
-        },
+    clearSession() {
+      this.generation += 1
+      this.profileRequest += 1
+      this.user = null
+      this.profile = null
+      this.profileError = ''
+      useNotificationsStore().reset()
     },
+    setUser(user) {
+      if (this.user?.id !== user?.id) this.clearSession()
+      this.user = user || null
+    },
+    async initAuth() {
+      this.authSubscription?.unsubscribe()
+      // Never await Supabase calls inside its auth callback (the auth lock is held).
+      const { data } = supabase.auth.onAuthStateChange((event, session) => {
+        if (event === 'SIGNED_OUT') {
+          this.clearSession()
+          return
+        }
+        if (this.sessionBlocked) return
+        this.setUser(session?.user)
+        this.profile = null
+        const generation = this.generation
+        setTimeout(() => {
+          if (generation === this.generation && this.user && (!this.profile || event === 'TOKEN_REFRESHED')) void this.fetchProfile()
+        }, 0)
+      })
+      this.authSubscription = data.subscription
+      try { await this.recoverSession() }
+      finally { this.isLoading = false }
+    },
+    fetchProfile() {
+      // Pinia devtools creates per-action proxies; the shared state is a stable key.
+      const state = this.$state
+      const existing = pendingProfiles.get(state)
+      if (existing?.id === this.user?.id && existing?.generation === this.generation) return existing.promise
+      const entry = { id: this.user?.id, generation: this.generation }
+      entry.promise = this._fetchProfile().finally(() => {
+        if (pendingProfiles.get(state) === entry) pendingProfiles.delete(state)
+      })
+      pendingProfiles.set(state, entry)
+      return entry.promise
+    },
+    async _fetchProfile() {
+      const id = this.user?.id
+      if (!id) return false
+      const generation = this.generation
+      const request = ++this.profileRequest
+      this.profile = null
+      this.profileError = ''
+      try {
+        const { data, error } = await supabase.from('profiles').select('*').eq('id', id).single()
+        if (error) throw error
+        if (!data || data.id !== id || !['user', 'it_staff', 'admin'].includes(data.role)) throw new Error('Profil doğrulanamadı.')
+        if (generation !== this.generation || request !== this.profileRequest) return false
+        this.profile = data
+        return true
+      } catch {
+        if (generation === this.generation && request === this.profileRequest) {
+          this.profileError = 'Profil doğrulanamadı. Bağlantıyı kontrol edip yeniden giriş yapın.'
+          this.profile = null
+        }
+        return false
+      }
+    },
+    async recoverSession() {
+      if (this.sessionBlocked) return
+      const generation = this.generation
+      this.profile = null
+      try {
+        const { data, error } = await supabase.auth.getUser()
+        if (generation !== this.generation) return
+        if (error || !data.user) { this.clearSession(); return }
+        this.setUser(data.user)
+        await this.fetchProfile()
+      } catch {
+        if (generation === this.generation) this.clearSession()
+      }
+    },
+    async signIn(email, password) {
+      this.actionLoading = true
+      this.sessionBlocked = false
+      storage?.removeItem(BLOCKED_KEY)
+      this.clearSession()
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+        if (error) throw error
+        this.setUser(data.user)
+        if (!await this.fetchProfile()) throw new Error(this.profileError)
+        return { success: true }
+      } catch (error) {
+        this.profile = null
+        return { success: false, error: this._translateError(error.message) }
+      } finally { this.actionLoading = false }
+    },
+    async signUp(email, password, fullName) {
+      this.actionLoading = true
+      try {
+        const { error } = await supabase.auth.signUp({ email, password, options: { data: { full_name: fullName } } })
+        if (error) throw error
+        return { success: true }
+      } catch (error) { return { success: false, error: this._translateError(error.message) } }
+      finally { this.actionLoading = false }
+    },
+    async signOut() {
+      this.sessionBlocked = true
+      storage?.setItem(BLOCKED_KEY, 'true')
+      this.clearSession() // Clear before network I/O and invalidate in-flight responses.
+      let result
+      try { result = await supabase.auth.signOut({ scope: 'local' }) }
+      finally { storage?.removeItem('techdesk.auth') }
+      if (result.error) throw new Error('Oturum yerelde kapatıldı; sunucuya çıkış bildirilemedi.')
+    },
+  },
 })

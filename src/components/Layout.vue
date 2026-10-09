@@ -21,7 +21,7 @@
 -->
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute, RouterView } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationsStore } from '@/stores/notifications'
@@ -50,10 +50,6 @@ const closeNotifications = (e) => {
 }
 
 onMounted(async () => {
-  if (authStore.user) {
-    await notificationsStore.fetchNotifications(authStore.user.id)
-    notificationsStore.subscribeToNotifications(authStore.user.id)
-  }
   document.addEventListener('click', closeNotifications)
 })
 
@@ -61,6 +57,15 @@ onUnmounted(() => {
   notificationsStore.unsubscribe()
   document.removeEventListener('click', closeNotifications)
 })
+
+watch(() => authStore.user?.id, id => {
+  notificationsStore.reset()
+  showNotifications.value = false
+  if (id) {
+    notificationsStore.subscribeToNotifications(id)
+    void notificationsStore.fetchNotifications(id)
+  }
+}, { immediate: true })
 
 // Tarih format
 const formatNotifDate = (dateStr) => {
@@ -421,7 +426,7 @@ const isActive = (path) => {
           RouterView: Aktif route'un bileşeni burada render edilir.
           Layout, tüm korumalı sayfalar için ortak bir çerçeve sağlar.
         -->
-        <RouterView :key="$route.fullPath" />
+        <RouterView :key="`${authStore.user?.id}:${$route.fullPath}`" />
       </main>
     </div>
   </div>

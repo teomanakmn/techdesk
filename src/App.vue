@@ -12,13 +12,19 @@
 -->
 
 <script setup>
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, watch } from 'vue'
 import { RouterView, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
 const router = useRouter()
 const SESSION_TIMEOUT_MINUTES = 120
+watch(() => [authStore.user?.id, authStore.profileError, authStore.userRole], () => {
+  const route = router.currentRoute.value
+  if (!route.matched.some(record => record.meta.requiresAuth) || authStore.isLoading) return
+  if (!authStore.user || authStore.profileError) void router.replace('/login')
+  else if (authStore.userRole && route.meta.roles && !route.meta.roles.includes(authStore.userRole)) void router.replace('/unauthorized')
+})
 
 // ─── Oturum Zaman Aşımı Mantığı ────────────────────────────
 let timeoutTimer = null
@@ -62,7 +68,6 @@ const cleanupListeners = () => {
 
 // Uygulama başlangıcında oturum kontrolü
 onMounted(async () => {
-  await authStore.initAuth()
 
   // Dinleyicileri başlat ve sayacı kur
   setupListeners()
@@ -88,5 +93,5 @@ onUnmounted(() => {
   </div>
 
   <!-- Ana Uygulama — Auth kontrolü tamamlandıktan sonra -->
-  <RouterView v-else />
+  <RouterView v-else :key="authStore.user?.id || 'guest'" />
 </template>

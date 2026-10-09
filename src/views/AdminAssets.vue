@@ -2,7 +2,6 @@
 import { computed, onMounted, ref } from 'vue'
 import { supabase } from '@/lib/supabaseClient'
 import { useAuthStore } from '@/stores/auth'
-import { useLogger } from '@/utils/useLogger'
 
 const assets = ref([])
 const profiles = ref([])
@@ -31,7 +30,6 @@ const categorySuggestions = ['Laptop', 'Yazıcı', 'Monitör', 'Masaüstü PC', 
 const statusOptions = ['Aktif', 'Arizali', 'Depoda']
 const REQUEST_TIMEOUT_MS = 12000
 const authStore = useAuthStore()
-const { logAction } = useLogger()
 
 const statusClasses = {
   Aktif: 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40',
@@ -256,16 +254,13 @@ const saveAsset = async () => {
 
   try {
     isSaving.value = true
-    const previousAsset = isEditing.value
-      ? assets.value.find(asset => asset.id === editingAssetId.value)
-      : null
-    const previousAssignedTo = previousAsset?.assigned_to || null
-
     if (isEditing.value && editingAssetId.value) {
       const { error } = await supabase
         .from('assets')
         .update(payload)
         .eq('id', editingAssetId.value)
+      .select('id')
+      .single()
 
       if (error) throw error
     } else {
@@ -274,18 +269,6 @@ const saveAsset = async () => {
         .insert(payload)
 
       if (error) throw error
-    }
-
-    if (payload.assigned_to && payload.assigned_to !== previousAssignedTo) {
-      const assignedPersonName =
-        profiles.value.find(profile => profile.id === payload.assigned_to)?.full_name ||
-        'Bilinmeyen Kullanıcı'
-      await logAction(
-        'asset_assigned',
-        'asset',
-        isEditing.value ? editingAssetId.value : payload.serial_number,
-        `${payload.name} cihazı ${assignedPersonName} kullanıcısına atandı.`
-      )
     }
 
     saveSuccess.value = true
@@ -316,6 +299,8 @@ const deleteAsset = async (asset) => {
       .from('assets')
       .delete()
       .eq('id', asset.id)
+      .select('id')
+      .single()
 
     if (error) throw error
 
